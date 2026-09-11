@@ -283,21 +283,25 @@ if [ "$USE_CLASSIC_ICONS" = "true" ]; then
   CTX_BAR="${FG_GRAY}${ICON_CTX} ${BAR} ${NUM_COLOR}${PCT_FMT}%${R}"
 else
   if [ "$PCT_INT" -ge 90 ]; then bar_c="197"; elif [ "$PCT_INT" -ge 60 ]; then bar_c="214"; else bar_c="76"; fi
-  BAR=""
+  label_bg="236"; bar_bg="235"
+  # NOTE: only change the *foreground* per character (no \033[0m reset in the
+  # loop). A full reset would also wipe the pill's background color set below,
+  # leaving a black gap over the unfilled portion of the bar.
+  BAR="\033[48;5;${bar_bg}m"
   for ((i = 0; i < BAR_LEN; i++)); do
     if [ "$i" -lt "$FILLED" ]; then
-      BAR="${BAR}\033[38;5;${bar_c}m█\033[0m"
+      BAR="${BAR}\033[38;5;${bar_c}m█"
     elif [ "$i" -eq "$FILLED" ]; then
-      if [ "$REMAINDER" -ge 75 ]; then BAR="${BAR}\033[38;5;${bar_c}m▓\033[0m"
-      elif [ "$REMAINDER" -ge 50 ]; then BAR="${BAR}\033[38;5;${bar_c}m▒\033[0m"
-      else BAR="${BAR}\033[38;5;${bar_c}m░\033[0m"
+      if [ "$REMAINDER" -ge 75 ]; then BAR="${BAR}\033[38;5;${bar_c}m▓"
+      elif [ "$REMAINDER" -ge 50 ]; then BAR="${BAR}\033[38;5;${bar_c}m▒"
+      else BAR="${BAR}\033[38;5;${bar_c}m░"
       fi
     else
-      BAR="${BAR}\033[38;5;236m░\033[0m"
+      BAR="${BAR}\033[38;5;236m░"
     fi
   done
-  label_bg="236"; bar_bg="235"
-  CTX_BAR="\033[38;5;${label_bg}m\033[48;5;${label_bg}m\033[38;5;220m${ICON_CTX} ctx\033[48;5;${bar_bg}m ${BAR}\033[48;5;${label_bg}m \033[38;5;220m\033[1m${PCT_FMT}%\033[0m\033[38;5;${label_bg}m\033[0m"
+  BAR="${BAR}\033[0m"
+  CTX_BAR="\033[38;5;${label_bg}m\033[48;5;${label_bg}m\033[38;5;220m${ICON_CTX} ctx ${BAR}\033[48;5;${label_bg}m \033[38;5;220m\033[1m${PCT_FMT}%\033[0m\033[38;5;${label_bg}m\033[0m"
 fi
 
 TOK_DETAILS_WIDE=""
