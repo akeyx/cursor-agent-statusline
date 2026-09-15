@@ -86,7 +86,10 @@ for arg in "$@"; do
       echo -e "  Context Bar          󱍏          Context window usage bar + tokens."
       echo -e "  Output Style                   Active output style (hidden if default)."
       echo -e "  Vim Mode                       NORMAL/INSERT (hidden if vim disabled)."
-      echo -e "  Est. Session Cost   💰          Rough token x public-price estimate (NOT your real bill)."
+      echo -e "  Est. Session Cost   💰          Token x Cursor's official per-model rate + Team token-rate"
+      echo -e "                                  surcharge, excl. cache pricing (NOT your real bill; use"
+      echo -e "                                  cursor.com/dashboard/usage for the real figure)."
+      echo -e "                                  Add --no-token-rate if you're not on Team/Enterprise."
       echo -e "  Sys resources                  Host CPU load average & memory use."
       echo -e "  Power AC/BAT         󰚥/🔋       Host power source."
       exit 0
@@ -358,31 +361,82 @@ fi
 # ─── Estimated session cost ─────────────────────────────────────────────
 # cursor-agent's statusline payload has no cost/price field (unlike Claude
 # Code's `cost.total_cost_usd`) -- Cursor is subscription/usage-based, not
-# metered per raw token via this CLI. This is a rough estimate only, derived
-# from cumulative token counts x public list pricing (USD per 1M tokens) for
-# the closest known model family. It will NOT match your actual Cursor bill.
+# metered per raw token via this CLI. This is an estimate derived from
+# cumulative token counts x Cursor's own published per-model list pricing
+# (cursor.com/docs/models-and-pricing, USD per 1M tokens), plus the $0.25/M
+# "Cursor Token Rate" surcharge Team/Enterprise plans add on third-party
+# models (Cursor's own models -- Grok, Composer -- are exempt).
+#
+# Known limitations vs. your real bill:
+#   - The payload only reports combined input/output token totals, not the
+#     cache-write / cache-read split Cursor actually bills on (cache reads
+#     are far cheaper than fresh input in agentic sessions with a lot of
+#     repeated context) -- so this tends to OVER-estimate cost.
+#   - "-fast" model variants, Auto routing, and legacy Max Mode surcharges
+#     aren't reflected unless the model id/name says so explicitly.
+# For a real number, check https://cursor.com/dashboard/usage after a
+# session, or (Team/Enterprise admins) the Admin API's
+# /teams/filtered-usage-events `chargedCents` field.
 price_for_model() {
   local key
   key=$(printf '%s %s' "$MODEL_ID" "$MODEL_NAME" | tr '[:upper:]' '[:lower:]')
   case "$key" in
-    *opus*)                 echo "15 75" ;;
-    *sonnet*)                echo "3 15" ;;
-    *haiku*)                 echo "0.8 4" ;;
-    *gpt-5*|*gpt5*)          echo "1.25 10" ;;
-    *gpt-4o*|*gpt4o*)        echo "2.5 10" ;;
-    *o1*|*o3*)               echo "15 60" ;;
-    *grok*)                  echo "3 15" ;;
-    *gemini*)                echo "1.25 5" ;;
-    *composer*|*muse*)       echo "3 15" ;;
-    *)                       echo "3 15" ;;
+    # Cursor-native models -- exempt from the Cursor Token Rate surcharge
+    *grok*4.6*fast*)                 echo "4 12 1" ;;
+    *grok*4.5*fast*)                 echo "4 18 1" ;;
+    *grok*)                          echo "2 6 1" ;;
+    *composer*fast*)                 echo "3 15 1" ;;
+    *composer*)                      echo "0.5 2.5 1" ;;
+    # Third-party models -- list price, surcharge applied separately below
+    *fable*)                         echo "10 50 0" ;;
+    *opus*4.7*fast*)                 echo "30 150 0" ;;
+    *opus*)                          echo "5 25 0" ;;
+    *sonnet*5*)                      echo "2 10 0" ;;   # "Claude Sonnet 5" family (incl. 1M variant)
+    *sonnet*)                        echo "3 15 0" ;;   # older Claude 4.x Sonnet family
+    *haiku*)                         echo "1 5 0" ;;
+    *muse*spark*)                    echo "1.25 4.25 0" ;;
+    *gpt*5.6*sol*)                   echo "4 20 0" ;;
+    *gpt*5.6*terra*)                 echo "2 12 0" ;;
+    *gpt*5.6*luna*)                  echo "0.2 1.2 0" ;;
+    *gpt*5.5*)                       echo "5 30 0" ;;
+    *gpt*5.4*mini*)                  echo "0.75 4.5 0" ;;
+    *gpt*5.4*nano*)                  echo "0.2 1.25 0" ;;
+    *gpt*5.4*)                       echo "2.5 15 0" ;;
+    *gpt*5.2*|*gpt*5.3*)             echo "1.75 14 0" ;;
+    *gpt*5.1*mini*)                  echo "0.25 2 0" ;;
+    *gpt*5.1*|*gpt*5-codex*)         echo "1.25 10 0" ;;
+    *gpt*5*mini*)                    echo "0.25 2 0" ;;
+    *gpt*5*fast*)                    echo "2.5 20 0" ;;
+    *gpt*5*|*gpt5*)                  echo "1.25 10 0" ;;
+    *gemini*3*pro*)                  echo "2 12 0" ;;
+    *gemini*3.5*flash*)              echo "1.5 9 0" ;;
+    *gemini*3.6*flash*)              echo "1.5 7.5 0" ;;
+    *gemini*3.7*flash*|*gemini*3.8*flash*) echo "0.75 3.5 0" ;;
+    *gemini*flash*)                  echo "0.5 3 0" ;;
+    *gemini*)                        echo "1 6 0" ;;
+    *glm*)                           echo "1.4 4.4 0" ;;
+    *kimi*)                          echo "1.5 8 0" ;;
+    *)                               echo "3 15 0" ;;  # unrecognized model fallback
   esac
 }
 
+# Whether to add Cursor's $0.25/M "Cursor Token Rate" surcharge for
+# third-party models (applies on Team/Enterprise plans). Override with
+# --no-token-rate if you're on an individual Pro/Pro Plus/Ultra plan.
+APPLY_TOKEN_RATE=true
+for arg in "$@"; do
+  [ "$arg" = "--no-token-rate" ] && APPLY_TOKEN_RATE=false
+done
+
 COST_FMT=""
 if [ "$((INPUT_TOKENS + OUTPUT_TOKENS))" -gt 0 ] 2>/dev/null && command -v awk &>/dev/null; then
-  read -r PRICE_IN PRICE_OUT <<< "$(price_for_model)"
-  COST_VAL=$(awk -v it="$INPUT_TOKENS" -v ot="$OUTPUT_TOKENS" -v pi="$PRICE_IN" -v po="$PRICE_OUT" \
-    'BEGIN{printf "%.2f", (it/1000000*pi)+(ot/1000000*po)}')
+  read -r PRICE_IN PRICE_OUT IS_NATIVE <<< "$(price_for_model)"
+  TOKEN_RATE="0"
+  if [ "$APPLY_TOKEN_RATE" = "true" ] && [ "$IS_NATIVE" != "1" ]; then
+    TOKEN_RATE="0.25"
+  fi
+  COST_VAL=$(awk -v it="$INPUT_TOKENS" -v ot="$OUTPUT_TOKENS" -v pi="$PRICE_IN" -v po="$PRICE_OUT" -v tr="$TOKEN_RATE" \
+    'BEGIN{printf "%.2f", (it/1000000*pi)+(ot/1000000*po)+((it+ot)/1000000*tr)}')
   COST_FMT=$(make_badge "${ICON_COST}" "~\$${COST_VAL} est." "220")
 fi
 
