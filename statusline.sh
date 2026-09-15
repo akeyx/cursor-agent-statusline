@@ -86,9 +86,10 @@ for arg in "$@"; do
       echo -e "  Context Bar          󱍏          Context window usage bar + tokens."
       echo -e "  Output Style                   Active output style (hidden if default)."
       echo -e "  Vim Mode                       NORMAL/INSERT (hidden if vim disabled)."
-      echo -e "  Est. Session Cost   💰          Token x Cursor's official per-model rate + Team token-rate"
-      echo -e "                                  surcharge, excl. cache pricing (NOT your real bill; use"
-      echo -e "                                  cursor.com/dashboard/usage for the real figure)."
+      echo -e "  Session Cost        💰          3 tiers, best available is shown:"
+      echo -e "                                  \"\$X.XX real\"  -- exact, from cursor-real-cost.sh + Admin API"
+      echo -e "                                  \"~\$X.XX cal.\" -- your own calibrated per-model rate"
+      echo -e "                                  \"~\$X.XX est.\" -- static official-rate-table guess (default)"
       echo -e "                                  Add --no-token-rate if you're not on Team/Enterprise."
       echo -e "  Sys resources                  Host CPU load average & memory use."
       echo -e "  Power AC/BAT         󰚥/🔋       Host power source."
@@ -428,8 +429,41 @@ for arg in "$@"; do
   [ "$arg" = "--no-token-rate" ] && APPLY_TOKEN_RATE=false
 done
 
+# ─── Optional calibration cache (see cursor-real-cost.sh) ────────────────
+# A separate, manually/cron-run script can fetch REAL billed cost from
+# Cursor's Admin API and write a small JSON cache here. When present, we
+# prefer it over the static rate-table guess, in priority order:
+#   1. Exact real $ for this session (by_conversation[session_id]) -- no
+#      pricing math involved at all, just the actual chargedCents Cursor
+#      billed for this conversation.
+#   2. A per-model blended $/1M-token rate calibrated from your own recent
+#      billing history (bakes in your real cache-hit ratio).
+#   3. The static official-rate-table estimate (always available, no setup
+#      required).
+CALIBRATION_FILE="${CURSOR_COST_CACHE_DIR:-$HOME/.cache/cursor-agent-statusline}/calibration.json"
+CAL_REAL_USD=""
+CAL_BLENDED_RATE=""
+if [ -f "$CALIBRATION_FILE" ] && command -v jq &>/dev/null; then
+  if [ -n "$SESSION_ID" ]; then
+    CAL_REAL_USD=$(jq -r --arg sid "$SESSION_ID" '.by_conversation[$sid].charged_usd // empty' "$CALIBRATION_FILE" 2>/dev/null || true)
+  fi
+  if [ -z "$CAL_REAL_USD" ]; then
+    MODEL_KEY_LC=$(printf '%s' "${MODEL_ID:-$MODEL_NAME}" | tr '[:upper:]' '[:lower:]')
+    CAL_BLENDED_RATE=$(jq -r --arg m "$MODEL_KEY_LC" \
+      '.models | to_entries[] | select(.key | ascii_downcase == $m) | .value.blended_usd_per_m_io_tokens' \
+      "$CALIBRATION_FILE" 2>/dev/null | head -1 || true)
+  fi
+fi
+
 COST_FMT=""
-if [ "$((INPUT_TOKENS + OUTPUT_TOKENS))" -gt 0 ] 2>/dev/null && command -v awk &>/dev/null; then
+if [ -n "$CAL_REAL_USD" ] && command -v awk &>/dev/null; then
+  COST_VAL=$(awk -v v="$CAL_REAL_USD" 'BEGIN{printf "%.2f", v}')
+  COST_FMT=$(make_badge "${ICON_COST}" "\$${COST_VAL} real" "76")
+elif [ -n "$CAL_BLENDED_RATE" ] && [ "$((INPUT_TOKENS + OUTPUT_TOKENS))" -gt 0 ] 2>/dev/null && command -v awk &>/dev/null; then
+  COST_VAL=$(awk -v it="$INPUT_TOKENS" -v ot="$OUTPUT_TOKENS" -v r="$CAL_BLENDED_RATE" \
+    'BEGIN{printf "%.2f", ((it+ot)/1000000)*r}')
+  COST_FMT=$(make_badge "${ICON_COST}" "~\$${COST_VAL} cal." "214")
+elif [ "$((INPUT_TOKENS + OUTPUT_TOKENS))" -gt 0 ] 2>/dev/null && command -v awk &>/dev/null; then
   read -r PRICE_IN PRICE_OUT IS_NATIVE <<< "$(price_for_model)"
   TOKEN_RATE="0"
   if [ "$APPLY_TOKEN_RATE" = "true" ] && [ "$IS_NATIVE" != "1" ]; then
