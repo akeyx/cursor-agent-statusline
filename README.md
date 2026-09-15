@@ -13,12 +13,33 @@ An enhanced, powerline-style status line for the [`cursor-agent` CLI](https://cu
 
 ### Real cost calibration (optional)
 
-`cursor-agent`'s own statusline payload has no cost field at all, and there's no official Cursor MCP/CLI for billing data — only a handful of low-adoption community MCP wrappers, which didn't clear our bar for handling a billing-scoped API key. Instead, [`cursor-real-cost.sh`](./cursor-real-cost.sh) talks directly to Cursor's official, documented Admin API (`POST https://api.cursor.com/teams/filtered-usage-events`) and writes a small local cache the statusline reads (no network calls happen in the statusline's own hot path).
+`cursor-agent`'s own statusline payload has no cost field at all, and there's no official Cursor MCP for billing data — only a handful of low-adoption community MCP wrappers, which didn't clear our bar for handling a billing-scoped API key. Instead there are two official, first-party options, depending on what access you have. Both write to the **same** local cache (`~/.cache/cursor-agent-statusline/calibration.json`), which `statusline.sh` reads — no statusline changes needed regardless of which one you use, and you can use both together.
 
-**Setup** (requires Team/Enterprise admin access to generate a key):
+#### Option A: User API key (no Team Admin access needed) — [`sdk-cost/`](./sdk-cost)
+
+Uses Cursor's own **official npm package** ([`@cursor/sdk`](https://www.npmjs.com/package/@cursor/sdk), published by Cursor/Anysphere) and its `Agent.getUsage()` call, which explicitly supports personal **User API keys** — the same billed-cost data ("the same agent that runs in the Cursor IDE, CLI, and web app") without needing Team Admin permissions.
+
+```bash
+# 1. Generate a User API key: cursor.com/dashboard -> API Keys -> New API Key
+# 2. Never paste it into a chat/agent session -- export it yourself:
+export CURSOR_API_KEY="crsr_..."
+
+cd sdk-cost
+npm install               # installs the pinned @cursor/sdk
+node refresh-real-cost.mjs           # scans recent local CLI sessions (~/.cursor/chats)
+# or target specific sessions:
+node refresh-real-cost.mjs <sessionId> [<sessionId> ...]
+```
+
+This populates the exact `$X.XX real` tier per session. It can't populate the per-model `cal.` tier (the SDK's usage response doesn't include which model a run used), so pair it with Option B if you want that too.
+
+#### Option B: Team/Enterprise Admin API key — [`cursor-real-cost.sh`](./cursor-real-cost.sh)
+
+Talks directly to Cursor's official, documented Admin API (`POST https://api.cursor.com/teams/filtered-usage-events`), which returns per-event model + token + cost breakdowns — this is what powers the `cal.` (calibrated per-model rate) tier, plus an alternate route to the exact `real` tier via `conversationId`.
 
 ```bash
 # 1. Generate a key at cursor.com/dashboard -> Settings -> Advanced -> Admin API Keys
+#    (requires Team/Enterprise admin access)
 # 2. Store it yourself -- never paste it into a chat/agent session:
 mkdir -p ~/.config/cursor-admin && chmod 700 ~/.config/cursor-admin
 read -rs -p "Cursor Admin API key: " CURSOR_KEY && echo
@@ -26,11 +47,10 @@ printf '%s' "$CURSOR_KEY" > ~/.config/cursor-admin/api_key
 chmod 600 ~/.config/cursor-admin/api_key
 unset CURSOR_KEY
 
-# 3. Run it (pulls the last 7 days by default):
-./cursor-real-cost.sh
+./cursor-real-cost.sh     # pulls the last 7 days by default
 ```
 
-Cursor aggregates billing data hourly, so re-run this periodically (a cron job or systemd timer at most once/hour is plenty) to keep the cache fresh. Very recent/in-progress sessions won't show a `real` badge until Cursor has billed and aggregated them — the statusline falls back to `cal.` or `est.` until then.
+Cursor aggregates billing data hourly, so re-run either script periodically (a cron job or systemd timer at most once/hour is plenty) to keep the cache fresh. Very recent/in-progress sessions won't show a `real` badge until Cursor has billed and settled them — the statusline falls back to `cal.` or `est.` until then.
 - **Host badges**: RAM/load average, AC/battery status, vim mode, active output style.
 - **Responsive layout**: automatically switches between a single-row powerline (wide terminals), a 2-line boxed layout (medium), and a stacked layout (narrow) — width-budgeted so segments and badges are dropped in priority order before anything wraps.
 - **Nerd Font or classic**: use `--classic` for a plain-ASCII fallback on terminals without a patched Nerd Font.
