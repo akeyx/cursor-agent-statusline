@@ -217,7 +217,17 @@ shorten_path() {
 CWD_SHORT=$(shorten_path "$CWD")
 
 visible_len() {
-  printf '%s' "$(echo -e "$1" | sed 's/\x1b\[[0-9;]*m//g')" | wc -m
+  local stripped wide_count
+  stripped=$(echo -e "$1" | sed 's/\x1b\[[0-9;]*m//g')
+  # `wc -m` counts *characters*, not terminal *columns*. A handful of our
+  # icons (🌳 worktree, 💰 cost, 🔋 battery, ✋ manual-mode) are emoji that
+  # render as 2 columns wide in virtually every terminal but only count as
+  # 1 character, so budgets built on the raw char count silently under-shoot
+  # the real rendered width -- eventually enough to make the terminal itself
+  # hard-wrap a line we thought still had room. Add back the missing column
+  # for each occurrence of a known double-width glyph.
+  wide_count=$(printf '%s' "$stripped" | grep -o '🌳\|💰\|🔋\|✋' | wc -l)
+  echo $(( $(printf '%s' "$stripped" | wc -m) + wide_count ))
 }
 
 # ─── Segment / badge formatters ────────────────────────────────────────────
@@ -513,7 +523,7 @@ LINE1_RUNNING=0
 add_seg() {
   local text="$1" bg="$2" fg="$3" force="${4:-false}"
   local w
-  w=$(( $(printf '%s' "$text" | wc -m) + 2 ))
+  w=$(( $(visible_len "$text") + 2 ))
   if [ "$force" != "true" ] && [ "$((LINE1_RUNNING + w))" -gt "$LINE1_BUDGET" ]; then
     return 1
   fi
