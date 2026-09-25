@@ -439,6 +439,68 @@ for arg in "$@"; do
   [ "$arg" = "--no-token-rate" ] && APPLY_TOKEN_RATE=false
 done
 
+# ─── Session token tracking & accumulation ────────────────────────────────
+# cursor-agent payloads report current context window snapshot size
+# (context_window.total_input_tokens), NOT cumulative tokens across all turns.
+# In multi-turn sessions, each turn sends the context window to the API.
+# We persist session token state in ~/.cache/cursor-agent-statusline/sessions/
+# to accumulate cumulative input/output tokens for accurate session cost math.
+CUM_INPUT_TOKENS="$INPUT_TOKENS"
+CUM_OUTPUT_TOKENS="$OUTPUT_TOKENS"
+
+if [ -n "$SESSION_ID" ] && command -v jq &>/dev/null; then
+  SESS_CACHE_DIR="${CURSOR_COST_CACHE_DIR:-$HOME/.cache/cursor-agent-statusline}/sessions"
+  mkdir -p "$SESS_CACHE_DIR" 2>/dev/null || true
+  SESS_FILE="$SESS_CACHE_DIR/${SESSION_ID}.json"
+
+  if [ -f "$SESS_FILE" ]; then
+    eval "$(jq -r '
+      "PREV_CUM_IN=" + (.cum_input // 0 | tostring) +
+      "\nPREV_CUM_OUT=" + (.cum_output // 0 | tostring) +
+      "\nLAST_CTX_IN=" + (.last_ctx_in // 0 | tostring) +
+      "\nLAST_CTX_OUT=" + (.last_ctx_out // 0 | tostring) +
+      "\nLAST_TURN_IN=" + (.last_turn_in // 0 | tostring) +
+      "\nLAST_TURN_OUT=" + (.last_turn_out // 0 | tostring)
+    ' "$SESS_FILE" 2>/dev/null || true)"
+
+    PREV_CUM_IN="${PREV_CUM_IN:-0}"
+    PREV_CUM_OUT="${PREV_CUM_OUT:-0}"
+    LAST_CTX_IN="${LAST_CTX_IN:-0}"
+    LAST_CTX_OUT="${LAST_CTX_OUT:-0}"
+    LAST_TURN_IN="${LAST_TURN_IN:-0}"
+    LAST_TURN_OUT="${LAST_TURN_OUT:-0}"
+
+    DELTA_IN=0
+    DELTA_OUT=0
+
+    if [ "$TURN_INPUT_TOKENS" -gt 0 ] 2>/dev/null && [ "$TURN_INPUT_TOKENS" -ne "$LAST_TURN_IN" ]; then
+      DELTA_IN="$INPUT_TOKENS"
+      DELTA_OUT="$TURN_OUTPUT_TOKENS"
+    elif [ "$INPUT_TOKENS" -gt "$LAST_CTX_IN" ] 2>/dev/null; then
+      DELTA_IN="$INPUT_TOKENS"
+      [ "$OUTPUT_TOKENS" -gt "$LAST_CTX_OUT" ] 2>/dev/null && DELTA_OUT=$((OUTPUT_TOKENS - LAST_CTX_OUT))
+    elif [ "$OUTPUT_TOKENS" -gt "$LAST_CTX_OUT" ] 2>/dev/null; then
+      DELTA_OUT=$((OUTPUT_TOKENS - LAST_CTX_OUT))
+    fi
+
+    CUM_INPUT_TOKENS=$((PREV_CUM_IN + DELTA_IN))
+    CUM_OUTPUT_TOKENS=$((PREV_CUM_OUT + DELTA_OUT))
+
+    [ "$CUM_INPUT_TOKENS" -lt "$INPUT_TOKENS" ] 2>/dev/null && CUM_INPUT_TOKENS="$INPUT_TOKENS"
+    [ "$CUM_OUTPUT_TOKENS" -lt "$OUTPUT_TOKENS" ] 2>/dev/null && CUM_OUTPUT_TOKENS="$OUTPUT_TOKENS"
+  fi
+
+  jq -n \
+    --argjson cum_in "$CUM_INPUT_TOKENS" \
+    --argjson cum_out "$CUM_OUTPUT_TOKENS" \
+    --argjson last_ctx_in "$INPUT_TOKENS" \
+    --argjson last_ctx_out "$OUTPUT_TOKENS" \
+    --argjson last_turn_in "$TURN_INPUT_TOKENS" \
+    --argjson last_turn_out "$TURN_OUTPUT_TOKENS" \
+    '{cum_input:$cum_in, cum_output:$cum_out, last_ctx_in:$last_ctx_in, last_ctx_out:$last_ctx_out, last_turn_in:$last_turn_in, last_turn_out:$last_turn_out}' \
+    > "$SESS_FILE" 2>/dev/null || true
+fi
+
 # ─── Optional calibration cache (see cursor-real-cost.sh) ────────────────
 # A separate, manually/cron-run script can fetch REAL billed cost from
 # Cursor's Admin API and write a small JSON cache here. When present, we
@@ -469,17 +531,17 @@ COST_FMT=""
 if [ -n "$CAL_REAL_USD" ] && command -v awk &>/dev/null; then
   COST_VAL=$(awk -v v="$CAL_REAL_USD" 'BEGIN{printf "%.2f", v}')
   COST_FMT=$(make_badge "${ICON_COST}" "\$${COST_VAL} real" "76")
-elif [ -n "$CAL_BLENDED_RATE" ] && [ "$((INPUT_TOKENS + OUTPUT_TOKENS))" -gt 0 ] 2>/dev/null && command -v awk &>/dev/null; then
-  COST_VAL=$(awk -v it="$INPUT_TOKENS" -v ot="$OUTPUT_TOKENS" -v r="$CAL_BLENDED_RATE" \
+elif [ -n "$CAL_BLENDED_RATE" ] && [ "$((CUM_INPUT_TOKENS + CUM_OUTPUT_TOKENS))" -gt 0 ] 2>/dev/null && command -v awk &>/dev/null; then
+  COST_VAL=$(awk -v it="$CUM_INPUT_TOKENS" -v ot="$CUM_OUTPUT_TOKENS" -v r="$CAL_BLENDED_RATE" \
     'BEGIN{printf "%.2f", ((it+ot)/1000000)*r}')
   COST_FMT=$(make_badge "${ICON_COST}" "~\$${COST_VAL} cal." "214")
-elif [ "$((INPUT_TOKENS + OUTPUT_TOKENS))" -gt 0 ] 2>/dev/null && command -v awk &>/dev/null; then
+elif [ "$((CUM_INPUT_TOKENS + CUM_OUTPUT_TOKENS))" -gt 0 ] 2>/dev/null && command -v awk &>/dev/null; then
   read -r PRICE_IN PRICE_OUT IS_NATIVE <<< "$(price_for_model)"
   TOKEN_RATE="0"
   if [ "$APPLY_TOKEN_RATE" = "true" ] && [ "$IS_NATIVE" != "1" ]; then
     TOKEN_RATE="0.25"
   fi
-  COST_VAL=$(awk -v it="$INPUT_TOKENS" -v ot="$OUTPUT_TOKENS" -v pi="$PRICE_IN" -v po="$PRICE_OUT" -v tr="$TOKEN_RATE" \
+  COST_VAL=$(awk -v it="$CUM_INPUT_TOKENS" -v ot="$CUM_OUTPUT_TOKENS" -v pi="$PRICE_IN" -v po="$PRICE_OUT" -v tr="$TOKEN_RATE" \
     'BEGIN{printf "%.2f", (it/1000000*pi)+(ot/1000000*po)+((it+ot)/1000000*tr)}')
   COST_FMT=$(make_badge "${ICON_COST}" "~\$${COST_VAL} est." "220")
 fi
