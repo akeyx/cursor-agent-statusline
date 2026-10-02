@@ -636,7 +636,8 @@ if [ -n "$SESSION_DISP" ]; then
 fi
 
 # 7. Version (optional, lowest priority)
-if [ -n "$VERSION" ]; then
+# Only when there's room to spare beyond the cost/sys/power badges (~45 cols)
+if [ -n "$VERSION" ] && [ "$((LINE1_RUNNING + ${#VERSION} + 4 + 45))" -le "$LINE1_BUDGET" ]; then
   add_seg "v${VERSION}" "$BG_META" "$FG_META_TEXT" || true
 fi
 
