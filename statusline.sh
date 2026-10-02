@@ -677,23 +677,17 @@ build_badge_line() {
 
 LINE1_VIS=$(visible_len "$LINE1")
 
-if [ "$COLS" -ge 180 ] && [ "$((LINE1_VIS + 40))" -lt "$COLS" ]; then
-  # Wide layout: single row, powerline left + badges right (only when there
-  # is comfortably enough room; otherwise fall through to boxed layout below)
-  LINE2=$(build_badge_line $((COLS - LINE1_VIS - 4)))
+if [ "$COLS" -ge 100 ]; then
+  # Single row if powerline + badges fit side by side (margin 4), else 2-line box
+  LINE2=$(build_badge_line 1000)
   LINE2_VIS=$(visible_len "$LINE2")
-  if [ "$((LINE1_VIS + LINE2_VIS + 1))" -le "$COLS" ]; then
-    print_right_aligned "$LINE1" "$LINE2" "$COLS"
+  if [ "$((LINE1_VIS + LINE2_VIS + 3))" -le "$((COLS - 4))" ]; then
+    print_right_aligned "$LINE1" "$LINE2" "$((COLS - 4))"
   else
+    LINE2=$(build_badge_line $((COLS - 3)))
     echo -e "${line_pref1}$(clip_line "$LINE1" $((COLS - 2)))"
     echo -e "${line_pref3}$(clip_line "$LINE2" $((COLS - 2)))"
   fi
-
-elif [ "$COLS" -ge 100 ]; then
-  # Medium layout: 2-line boxed display
-  LINE2=$(build_badge_line $((COLS - 3)))
-  echo -e "${line_pref1}$(clip_line "$LINE1" $((COLS - 2)))"
-  echo -e "${line_pref3}$(clip_line "$LINE2" $((COLS - 2)))"
 
 else
   # Compact layout: stacked display, badges wrapped onto their own line(s)
