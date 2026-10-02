@@ -579,6 +579,11 @@ ACTIVE_SEGS=(); ACTIVE_BGS=(); ACTIVE_FGS=()
 
 # Reserve a safety margin (box prefix + rounding slack for wide glyphs/emoji)
 LINE1_BUDGET=$((COLS - 8))
+# Wide enough for a single row: reserve room for the core ctx badge so optional
+# powerline segments (branch/session/version) are dropped before the row wraps.
+if [ "$COLS" -ge 100 ]; then
+  LINE1_BUDGET=$((LINE1_BUDGET - $(visible_len "${CTX_BAR}${TOK_DETAILS_MED}") - 3))
+fi
 [ "$LINE1_BUDGET" -lt 12 ] && LINE1_BUDGET=12
 LINE1_RUNNING=0
 
@@ -678,16 +683,9 @@ build_badge_line() {
 LINE1_VIS=$(visible_len "$LINE1")
 
 if [ "$COLS" -ge 100 ]; then
-  # Single row if powerline + badges fit side by side (margin 4), else 2-line box
-  LINE2=$(build_badge_line 1000)
-  LINE2_VIS=$(visible_len "$LINE2")
-  if [ "$((LINE1_VIS + LINE2_VIS + 3))" -le "$((COLS - 4))" ]; then
-    print_right_aligned "$LINE1" "$LINE2" "$((COLS - 4))"
-  else
-    LINE2=$(build_badge_line $((COLS - 3)))
-    echo -e "${line_pref1}$(clip_line "$LINE1" $((COLS - 2)))"
-    echo -e "${line_pref3}$(clip_line "$LINE2" $((COLS - 2)))"
-  fi
+  # Always a single row; badges that don't fit are dropped
+  LINE2=$(build_badge_line $((COLS - LINE1_VIS - 8)))
+  print_right_aligned "$LINE1" "$LINE2" "$((COLS - 4))"
 
 else
   # Compact layout: stacked display, badges wrapped onto their own line(s)
