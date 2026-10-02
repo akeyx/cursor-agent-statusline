@@ -585,7 +585,9 @@ LINE1_BUDGET=$((COLS - 8))
 # Wide enough for a single row: reserve room for the core ctx badge so optional
 # powerline segments (branch/session/version) are dropped before the row wraps.
 if [ "$COLS" -ge 100 ]; then
-  LINE1_BUDGET=$((LINE1_BUDGET - $(visible_len "${CTX_BAR}${TOK_DETAILS_MED}") - 3))
+  LINE1_BUDGET=$((LINE1_BUDGET - $(visible_len "${CTX_BAR}") - 3))
+  # Cost is high priority: reserve it before optional branch/session/version
+  [ -n "$COST_FMT" ] && LINE1_BUDGET=$((LINE1_BUDGET - $(visible_len "$COST_FMT") - 2))
 fi
 [ "$LINE1_BUDGET" -lt 12 ] && LINE1_BUDGET=12
 LINE1_RUNNING=0
@@ -669,19 +671,21 @@ fi
 # overflow the available width (mirrors the LINE1 budgeting above).
 build_badge_line() {
   local budget="$1"
-  local running line
-  line="${CTX_BAR}${TOK_DETAILS_MED}"
-  running=$(visible_len "$line")
+  local running badges=""
+  running=$(visible_len "$CTX_BAR")
   for badge in "$COST_FMT" "$STYLE_FMT" "$VIM_FMT" "$SYS_FMT" "$POWER_FMT"; do
     [ -z "$badge" ] && continue
     local w
     w=$(( $(visible_len "$badge") + 2 ))
     if [ "$((running + w))" -le "$budget" ]; then
-      line="${line}${sep}${badge}"
+      badges="${badges}${sep}${badge}"
       running=$((running + w))
     fi
   done
-  printf '%s' "$line"
+  # Token detail "(used/limit)" is lowest priority: only if room remains
+  local tok=""
+  [ "$((running + $(visible_len "$TOK_DETAILS_MED")))" -le "$budget" ] && tok="$TOK_DETAILS_MED"
+  printf '%s' "${CTX_BAR}${tok}${badges}"
 }
 
 LINE1_VIS=$(visible_len "$LINE1")
