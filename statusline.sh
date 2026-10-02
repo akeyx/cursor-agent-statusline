@@ -585,7 +585,7 @@ LINE1_RUNNING=0
 add_seg() {
   local text="$1" bg="$2" fg="$3" force="${4:-false}"
   local w
-  w=$(( $(visible_len "$text") + 2 ))
+  w=$(( $(visible_len "$text") + 3 ))  # " text " + powerline separator
   if [ "$force" != "true" ] && [ "$((LINE1_RUNNING + w))" -gt "$LINE1_BUDGET" ]; then
     return 1
   fi
