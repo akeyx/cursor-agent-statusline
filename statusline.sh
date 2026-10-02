@@ -230,6 +230,9 @@ visible_len() {
   echo $(( $(printf '%s' "$stripped" | wc -m) + wide_count ))
 }
 
+# Powerline glyphs (escapes, so editors/tools can't strip private-use chars)
+SEP_R=$'\ue0b0'; CAP_L=$'\ue0b6'; CAP_R=$'\ue0b4'
+
 # ─── Segment / badge formatters ────────────────────────────────────────────
 make_segment() {
   local bg_color="$1" fg_text="$2" text="$3" next_bg="$4"
@@ -240,9 +243,9 @@ make_segment() {
   local fg_sep_code
   fg_sep_code=$(echo -n "$bg_color" | sed 's/48;/38;/')
   if [ -n "$next_bg" ]; then
-    echo -n "${bg_color}${fg_text} ${text} ${next_bg}${fg_sep_code}${R}"
+    echo -n "${bg_color}${fg_text} ${text} ${next_bg}${fg_sep_code}${SEP_R}${R}"
   else
-    echo -n "${bg_color}${fg_text} ${text} \033[0m${fg_sep_code}${R}"
+    echo -n "${bg_color}${fg_text} ${text} \033[0m${fg_sep_code}${SEP_R}${R}"
   fi
 }
 
@@ -252,7 +255,7 @@ make_badge() {
     echo -n "${FG_GRAY}${icon} ${NUM_COLOR}${val}${R}"
     return
   fi
-  echo -n "\033[38;5;${bg_color}m\033[48;5;${bg_color}m\033[38;5;${icon_color}m${icon} \033[38;5;255m\033[1m${val}\033[0m\033[38;5;${bg_color}m\033[0m"
+  echo -n "\033[38;5;${bg_color}m${CAP_L}\033[48;5;${bg_color}m\033[38;5;${icon_color}m${icon} \033[38;5;255m\033[1m${val}\033[0m\033[38;5;${bg_color}m${CAP_R}\033[0m"
 }
 
 clip_line() {
@@ -315,7 +318,7 @@ else
     fi
   done
   BAR="${BAR}\033[0m"
-  CTX_BAR="\033[38;5;${label_bg}m\033[48;5;${label_bg}m\033[38;5;220m${ICON_CTX} ctx ${BAR}\033[48;5;${label_bg}m \033[38;5;220m\033[1m${PCT_FMT}%\033[0m\033[38;5;${label_bg}m\033[0m"
+  CTX_BAR="\033[38;5;${label_bg}m${CAP_L}\033[48;5;${label_bg}m\033[38;5;220m${ICON_CTX} ctx ${BAR}\033[48;5;${label_bg}m \033[38;5;220m\033[1m${PCT_FMT}%\033[0m\033[38;5;${label_bg}m${CAP_R}\033[0m"
 fi
 
 TOK_DETAILS_WIDE=""
